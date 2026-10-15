@@ -8,11 +8,20 @@ MODES = {
     'listing': '상장일 ~ 최신 종가',
     'exclude': '상장일 ~ 최신 종가 (지정 구간 제외)',
     'calendar': '몇 년·개월·일 전 ~ 최신 종가',
+    'trading': '거래일 기준 년·개월·일 전 ~ 최신 종가',
 }
 
 def prepare(config):
     c = dict(config)
     mode = c.get('period_mode')
+    if mode == 'trading':
+        offsets = [c.get(k) for k in ('trade_years', 'trade_months', 'trade_days')]
+        if any(type(v) is not int or v < 0 for v in offsets):
+            raise ValueError('년·개월·일은 0 이상의 정수로 입력하세요.')
+        total = offsets[0] * 252 + offsets[1] * 21 + offsets[2]
+        if not 1 <= total <= 2519:
+            raise ValueError('환산 기간은 1~2519거래일로 입력하세요.')
+        c.update(period_mode='trading', period=total + 1)
     if mode in ('listing', 'exclude'):
         if mode == 'exclude':
             try:
@@ -46,6 +55,9 @@ def describe(snapshot):
     c, r = snapshot['config'], snapshot['result']
     lines = [f"{c['symbol']} · {c['kind']}", f"조회 시각 (UTC): {snapshot['fetched_at']}",
              f"사용 종가: {r['start']} ~ {r['end']} / {r['count']}개"]
+    if c.get('period_mode') == 'trading':
+        lines += [f"거래일 기준: {prepare(c)['period']-1}거래일 전까지, 최신 종가 포함 {prepare(c)['period']}개",
+                  '환산 기준: 1년=252거래일, 1개월=21거래일 (달력 기간과 다름)']
     if c['kind'] == 'RSI':
         lines += [f"현재 RSI({c['period']}): {r['value']:.2f}",
                   f"최신 확정 종가: ${r['last_close']:,.2f}",
