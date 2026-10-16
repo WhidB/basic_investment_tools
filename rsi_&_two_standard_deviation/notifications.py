@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from native_core import prepare, evaluate, describe, MODES
+from native_core import prepare, evaluate, MODES
 from market_data import fetch
 
 ROOT = Path(__file__).resolve().parent
@@ -148,6 +148,37 @@ def rule_label(rule):
         span = MODES[mode]
     return f"{connection} · {c['symbol']} · ±{c['threshold']:g}σ · {span}"
 
+def format_alert(snapshot):
+    c, r, quote = snapshot['config'], snapshot['result'], snapshot['quote']
+    used = f"사용 종가: {r['start']} ~ {r['end']} / {r['count']}개"
+    if c['kind'] == 'RSI':
+        return '\n'.join([
+            f"[{c['symbol']} · RSI {c['period']}]",
+            f"현재 RSI: {r['value']:.2f}",
+            used,
+            f"최근 확정 종가: ${quote['price']:,.2f} ({quote['time']})",
+        ])
+    delta = r['price'] - r['mean']
+    if delta == 0:
+        comparison = '평균과 같습니다'
+    else:
+        comparison = f"평균보다 {abs(delta):,.2f}달러 ({abs(delta/r['mean']*100):.2f}%) {'높습니다' if delta > 0 else '낮습니다'}"
+    if r['value'] is None:
+        position = '계산 불가'
+        interpretation = '표준편차가 0이므로 범위 판정 불가'
+    else:
+        position = f"Z-score {r['value']:+.3f}"
+        interpretation = f"{c['threshold']:g}표준편차 {'내' if r['matched'] else '외'}에 있습니다"
+    return '\n'.join([
+        f"[{c['symbol']} · ±{c['threshold']:g}σ]",
+        f"현재 위치: {position}",
+        f"해석: {interpretation} · {comparison}",
+        used,
+        f"최신 확정 종가: ${quote['price']:,.2f} ({quote['time']})",
+        f"평균: ${r['mean']:,.2f} · 표준편차: ${r['std']:,.4f}",
+        f"범위: ${r['low']:,.2f} ~ ${r['high']:,.2f}",
+    ])
+
 def check_rule(rule):
     c = rule['config']
     market = fetch(prepare(c))
@@ -157,8 +188,7 @@ def check_rule(rule):
     # Alert comparisons must use the latest completed close, never a live quote.
     market = dict(market, quote=dict(price=latest['close'], time=latest['date'], source='최신 확정 종가'))
     snapshot = evaluate(c, market)
-    text = describe(snapshot).replace('현재 비교 가격:', '최신 확정 종가:').replace('현재 위치:', '최신 종가 위치:')
-    return f"[{rule_label(rule)}]\n{text}"
+    return format_alert(snapshot)
 
 def collect_cycle(current, completed, checker=check_rule):
     """Return completed results and failures; retry only unchanged unsuccessful rules."""

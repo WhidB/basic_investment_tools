@@ -9,8 +9,6 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from notifications import ROOT, rules, startup_enabled, collect_cycle, check_rule, save_report
 
@@ -44,9 +42,7 @@ def run_checks(emit, stop, once=False, loader=None, checker=check_rule, clock=ti
         visible_failures = failed if once else internet_failed
         signature = (tuple(completed.items()),tuple(visible_failures.items()),vpn_waiting,done)
         if can_show and signature != last_display:
-            stamp = datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')
-            parts = [f'종가 알림 · {stamp} (한국 시각)',
-                     '최신 확정 종가와 각 알림에 저장한 표준편차 기준으로 계산합니다.']
+            parts = []
             parts.extend(completed.values())
             parts.extend(visible_failures.values())
             if vpn_waiting:
@@ -98,8 +94,12 @@ class NotificationWindow(tk.Tk):
         self.columnconfigure(0,weight=1)
         self.rowconfigure(1,weight=1)
         ttk.Label(self,text='로그인 후 최신 종가 분석',font=('맑은 고딕',16,'bold')).grid(row=0,padx=16,pady=12,sticky='w')
-        self.body = ScrolledText(self,wrap='word',font=('맑은 고딕',11),state='disabled')
+        self.body = ScrolledText(self,wrap='word',font=('맑은 고딕',11),background='white',foreground='#202124',state='disabled')
         self.body.grid(row=1,column=0,padx=16,pady=8,sticky='nsew')
+        for tag, color in [('rsi_value', '#1565C0'), ('within', '#167044'),
+                           ('outside', '#B42318'), ('undefined', '#986000')]:
+            self.body.tag_configure(tag, font=('맑은 고딕',20,'bold'),
+                                    foreground=color, spacing1=6, spacing3=6)
         self.state_text = tk.StringVar(value='인터넷 및 종가 데이터 연결 대기')
         ttk.Label(self,textvariable=self.state_text,wraplength=730).grid(row=2,padx=16,sticky='w')
         ttk.Button(self,text='닫기',command=self.close).grid(row=3,padx=16,pady=12,sticky='e')
@@ -112,6 +112,24 @@ class NotificationWindow(tk.Tk):
                 self.events.put((f'알림 실행 중 오류가 발생했습니다.\n{exc}',True,True))
         threading.Thread(target=work,daemon=True).start()
 
+    def render_report(self, text):
+        self.body.configure(state='normal')
+        self.body.delete('1.0','end')
+        self.body.insert('1.0',text)
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.startswith('현재 RSI:'):
+                self.body.tag_add('rsi_value', f'{number}.0', f'{number}.end')
+            elif line.startswith('해석:'):
+                verdict = line.split(' · ', 1)[0]
+                if '표준편차 내에 있습니다' in verdict:
+                    tag = 'within'
+                elif '표준편차 외에 있습니다' in verdict:
+                    tag = 'outside'
+                else:
+                    tag = 'undefined'
+                self.body.tag_add(tag, f'{number}.0', f'{number}.{len(verdict)}')
+        self.body.configure(state='disabled')
+
     def poll(self):
         try:
             event = self.events.get_nowait()
@@ -120,10 +138,7 @@ class NotificationWindow(tk.Tk):
             if not visible and self.done:
                 self.close()
                 return
-            self.body.configure(state='normal')
-            self.body.delete('1.0','end')
-            self.body.insert('1.0',text)
-            self.body.configure(state='disabled')
+            self.render_report(text)
             self.state_text.set('조회 완료 · 다음 Windows 로그인 시 다시 알립니다.' if self.done else '일부 조회 대기 중 · 닫으면 이번 대기만 중지합니다.')
             if visible and (not self.shown or alert_now):
                 self.shown=True
